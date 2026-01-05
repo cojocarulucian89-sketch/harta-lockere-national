@@ -27,6 +27,7 @@
             border-radius: 0;
         }
         
+        /* --- STILURI PANOU DE CONTROL --- */
         .quest-panel {
             position: absolute;
             top: 15px;
@@ -177,6 +178,7 @@
         .popup-detail { margin: 4px 0; font-size: 12px; }
         .popup-status { padding: 4px 10px; border-radius: 15px; color: white; display: inline-block; margin-top: 5px; font-size: 11px; }
         .status-critic-urgent { background: #dc3545; }
+        .status-critic-standard { background: #fd7e14; }
         .status-standard { background: #28a745; }
         .status-atentie { background: #ffc107; color: #333; }
         
@@ -210,9 +212,6 @@
             <button onclick="toggleAddMode()" id="addModeBtn" class="quest-button add-mode">
                 🎯 ACTIVEAZĂ MOD ADĂUGARE
             </button>
-            <button onclick="analyzeAllImpacts()" class="quest-button analyze">
-                🤖 ANALIZĂ AI COMPLETĂ
-            </button>
             <button onclick="clearAllScenarios()" class="quest-button delete">
                 🗑️ ȘTERGE TOATE
             </button>
@@ -223,8 +222,10 @@
             <div style="color: #00d4ff; font-weight: 700; margin-bottom: 10px; font-size: 13px;">📊 STATISTICI REȚEA</div>
             <div class="stat-item"><span>📦 Total Locker-e:</span><span class="stat-value" id="totalLockersVal">0</span></div>
             <div class="status-legend">
-                <div class="status-item"><div class="status-color" style="background: #dc3545;"></div> Critic</div>
-                <div class="status-item"><div class="status-color" style="background: #28a745;"></div> OK</div>
+                <div class="status-item"><div class="status-color" style="background: #dc3545;"></div> Critic Urgent (>85%)</div>
+                <div class="status-item"><div class="status-color" style="background: #fd7e14;"></div> Critic Std (>60%)</div>
+                <div class="status-item"><div class="status-color" style="background: #ffc107;"></div> Atenție (>40%)</div>
+                <div class="status-item"><div class="status-color" style="background: #28a745;"></div> Standard</div>
             </div>
         </div>
         
@@ -234,7 +235,7 @@
     </div>
 
     <script>
-        // --- 0. DATE DEMOGRAFICE (Adăugate manual pentru a evita erori externe) ---
+        // --- 0. DATE DEMOGRAFICE (Default Bucuresti - Extensibil) ---
         var populationData = {
             bucuresti_sectoare: {
                 "Sector 1": { center_lat: 44.469, center_lng: 26.064, population: 225000, area_km2: 67.5 },
@@ -243,24 +244,23 @@
                 "Sector 4": { center_lat: 44.383, center_lng: 26.111, population: 288000, area_km2: 34 },
                 "Sector 5": { center_lat: 44.405, center_lng: 26.065, population: 271000, area_km2: 30 },
                 "Sector 6": { center_lat: 44.433, center_lng: 26.012, population: 367000, area_km2: 38 }
-            },
-            ilfov_orase: {
-                "Voluntari": { center_lat: 44.492, center_lng: 26.191, population: 42995, area_km2: 37 },
-                "Popesti-Leordeni": { center_lat: 44.379, center_lng: 26.166, population: 21895, area_km2: 55 },
-                "Otopeni": { center_lat: 44.552, center_lng: 26.071, population: 15721, area_km2: 31 },
-                "Bragadiru": { center_lat: 44.375, center_lng: 25.968, population: 40000, area_km2: 22 }
             }
         };
 
         // --- 1. INIȚIALIZARE HARTĂ ---
         var map = L.map('map', {
-            center: [44.4268, 26.1025],
+            center: [44.4268, 26.1025], // Centrat pe București
             zoom: 12,
             zoomControl: true
         });
 
         L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             attribution: '&copy; Quest Detective Pro',
+            maxZoom: 18
+        }).addTo(map);
+        
+        // Etichete străzi (overlay hibrid) pentru vizibilitate mai bună
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 18
         }).addTo(map);
 
@@ -283,29 +283,46 @@
             markerGroups[status] = L.layerGroup().addTo(map);
         });
 
-        // --- 3. FUNCȚIE PARSARE CSV ---
+        // --- 3. FUNCȚIE PARSARE CSV (Actualizată pentru fișierul tău) ---
         function parseCSV(text) {
             const lines = text.split('\n').filter(line => line.trim() !== '');
             if (lines.length === 0) return [];
             
+            // Parsare header
             const headers = lines[0].split(',').map(h => h.trim().replace(/['"]+/g, ''));
             
             return lines.slice(1).map(line => {
                 const data = {};
+                // Regex pentru a trata virgulele din interiorul ghilimelelor
                 const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+                
+                let rawRow = {};
                 
                 headers.forEach((header, i) => {
                     let val = values[i] || '';
-                    val = val.replace(/^"|"$/g, '').trim();
-                    
-                    if (['lat', 'lng', 'Incarcare'].includes(header)) {
-                        data[header] = parseFloat(val);
-                    } else if (header === 'Capacitate') {
-                        data[header] = parseInt(val, 10);
-                    } else {
-                        data[header] = val;
-                    }
+                    val = val.replace(/^"|"$/g, '').trim(); 
+                    rawRow[header] = val;
                 });
+
+                // --- MAPARE COLOANE DIN FIȘIERUL TĂU ---
+                // Folosim denumirile exacte din Excelul încărcat
+                data.lat = parseFloat(rawRow['Latitudine']);
+                data.lng = parseFloat(rawRow['Longitudine']);
+                data.Denumire = rawRow['Locker Nume'];
+                data.Oras = rawRow['Locker Oras'];
+                data.Adresa = rawRow['Adresa'];
+                data.Capacitate = parseInt(rawRow['Capacitate locker'], 10) || 50; // Default 50 dacă lipsește
+                
+                // Încărcare Noiembrie 2025
+                let loadVal = parseFloat(rawRow['Noiembrie 2025']);
+                data.Incarcare = isNaN(loadVal) ? 0 : loadVal;
+
+                // Calcul Status
+                if (data.Incarcare >= 0.85) data.Status = 'Critic Urgent';
+                else if (data.Incarcare >= 0.60) data.Status = 'Critic Standard';
+                else if (data.Incarcare >= 0.40) data.Status = 'Atenție';
+                else data.Status = 'Standard';
+
                 return data;
             });
         }
@@ -313,7 +330,7 @@
         // --- 4. ÎNCĂRCARE DATE ---
         fetch('date_lockere.csv')
             .then(response => {
-                if(!response.ok) throw new Error("Nu am putut încărca CSV-ul");
+                if(!response.ok) throw new Error("Nu am putut citi fisierul CSV");
                 return response.text();
             })
             .then(csvText => {
@@ -324,24 +341,26 @@
                     if (locker.lat && locker.lng && !isNaN(locker.lat) && !isNaN(locker.lng)) {
                         var color = statusColors[locker.Status] || '#666666';
                         var marker = L.circleMarker([locker.lat, locker.lng], {
-                            radius: 7,
+                            radius: 6,
                             fillColor: color,
                             color: 'white',
-                            weight: 2,
+                            weight: 1,
                             opacity: 1,
-                            fillOpacity: 0.8
+                            fillOpacity: 0.9
                         });
 
                         var popupContent = `
                             <div class="popup-content">
                                 <div class="popup-title">${locker.Denumire || 'Locker'}</div>
                                 <div class="popup-detail"><strong>📍 Oraș:</strong> ${locker.Oras || 'N/A'}</div>
+                                <div class="popup-detail"><strong>🏠 Adresă:</strong> ${locker.Adresa || 'N/A'}</div>
                                 <div class="popup-detail"><strong>📦 Cap:</strong> ${locker.Capacitate}</div>
-                                <div class="popup-detail"><strong>⚡ Încărcare:</strong> ${Math.round(locker.Incarcare * 100)}%</div>
+                                <div class="popup-detail"><strong>⚡ Încărcare (Nov):</strong> ${Math.round(locker.Incarcare * 100)}%</div>
                                 <div class="popup-status status-${(locker.Status || '').toLowerCase().replace(' ', '-')}">${locker.Status}</div>
                             </div>
                         `;
                         marker.bindPopup(popupContent);
+                        
                         if (markerGroups[locker.Status]) {
                             marker.addTo(markerGroups[locker.Status]);
                         } else {
@@ -350,16 +369,19 @@
                     }
                 });
             })
-            .catch(error => console.error('Eroare la încărcarea CSV:', error));
+            .catch(error => {
+                console.error('Eroare CSV:', error);
+                alert('⚠️ Atenție: Nu s-a putut încărca "date_lockere.csv". Asigură-te că fișierul este în folder!');
+            });
 
-        // Control layers
+        // Layer control
         var overlayMaps = {};
         Object.keys(statusColors).forEach(function(status) {
             overlayMaps[status] = markerGroups[status];
         });
         L.control.layers(null, overlayMaps).addTo(map);
 
-        // --- 5. FUNCȚII CALCUL ---
+        // --- 5. FUNCȚII CALCUL DENSITATE ȘI IMPACT ---
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
             const φ1 = lat1 * Math.PI/180;
@@ -380,7 +402,7 @@
             lockersData.forEach(function(locker) {
                 if (locker.lat && locker.lng) {
                     var distance = calculateDistance(targetLat, targetLng, locker.lat, locker.lng);
-                    if (distance <= 1000) {
+                    if (distance <= 1000) { // Raza 1km
                         nearbyCount++;
                         totalNearbyCapacity += locker.Capacitate;
                         totalNearbyLoad += locker.Incarcare * locker.Capacitate;
@@ -391,211 +413,140 @@
             if (nearbyCount > 0) {
                 var avgLoadNearby = totalNearbyLoad / totalNearbyCapacity;
                 densityFromLockers = avgLoadNearby * 100;
-                densityFromLockers += Math.min(20, nearbyCount * 2);
+                densityFromLockers += Math.min(20, nearbyCount * 2); // Bonus pentru densitate puncte
             }
             
-            var densityFromPopulation = 0;
+            // Calcul Demografic (Fallback pe 50% dacă nu suntem în București)
+            var densityFromPopulation = 50; 
             var closestZone = null;
-            var closestZoneName = null;
             var minDistance = Infinity;
             
-            var allZones = {};
-            Object.assign(allZones, populationData.bucuresti_sectoare);
-            Object.assign(allZones, populationData.ilfov_orase);
-            
-            Object.keys(allZones).forEach(function(zoneName) {
-                var zone = allZones[zoneName];
+            Object.keys(populationData.bucuresti_sectoare).forEach(function(zoneName) {
+                var zone = populationData.bucuresti_sectoare[zoneName];
                 var distance = calculateDistance(targetLat, targetLng, zone.center_lat, zone.center_lng);
                 if (distance < minDistance) {
                     minDistance = distance;
                     closestZone = zone;
-                    closestZoneName = zoneName;
                 }
             });
             
             if (closestZone && minDistance < 7000) {
-                var populationDensity = closestZone.population / closestZone.area_km2;
-                if (populationDensity > 8000) densityFromPopulation = 100;
-                else if (populationDensity > 5000) densityFromPopulation = 80;
-                else if (populationDensity > 2000) densityFromPopulation = 60;
-                else if (populationDensity > 1000) densityFromPopulation = 40;
-                else densityFromPopulation = 20;
-                
-                var distanceFactor = Math.max(0, 1 - (minDistance / 7000));
-                densityFromPopulation *= distanceFactor;
+                var popDens = closestZone.population / closestZone.area_km2;
+                if (popDens > 8000) densityFromPopulation = 100;
+                else if (popDens > 5000) densityFromPopulation = 80;
+                else densityFromPopulation = 60;
             }
             
             var finalDensity = (densityFromLockers * 0.6) + (densityFromPopulation * 0.4);
             
             return {
                 finalScore: Math.round(finalDensity * 10) / 10,
-                lockerFactor: Math.round(densityFromLockers * 10) / 10,
-                populationFactor: Math.round(densityFromPopulation * 10) / 10,
                 nearbyLockers: nearbyCount,
-                avgLoadNearby: nearbyCount > 0 ? Math.round((totalNearbyLoad / totalNearbyCapacity) * 100 * 10) / 10 : 0,
-                closestZone: closestZoneName || 'N/A',
-                populationDensity: closestZone ? Math.round(closestZone.population / closestZone.area_km2) : 0
+                avgLoadNearby: nearbyCount > 0 ? Math.round((totalNearbyLoad / totalNearbyCapacity) * 100) : 0
             };
         }
 
         function analyzeImpact(newLat, newLng) {
             var impactedLockers = [];
-            var degrevatedLockers = [];
             var totalLoadReduction = 0;
-            var newLockerCapacity = 60;
+            var newLockerCapacity = 60; // Capacitate standard locker nou
             
             lockersData.forEach(function(locker, index) {
                 if (locker.lat && locker.lng) {
                     var distance = calculateDistance(newLat, newLng, locker.lat, locker.lng);
-                    if (distance <= 400) {
+                    if (distance <= 400) { // Impact pe 400m
                         var impactFactor = Math.max(0, 1 - (distance / 400));
-                        var currentLoad = locker.Incarcare * locker.Capacitate;
-                        var transferPercentage = impactFactor * 0.3;
-                        var transferredLoad = currentLoad * transferPercentage;
-                        var newLoadPercentage = Math.max(0, locker.Incarcare - (transferredLoad / locker.Capacitate));
-                        var reductionPercentage = ((locker.Incarcare - newLoadPercentage) / locker.Incarcare) * 100;
+                        var currentLoadItems = locker.Incarcare * locker.Capacitate;
                         
-                        var impactData = {
-                            locker: locker,
-                            index: index,
-                            distance: Math.round(distance),
-                            oldLoadPercentage: Math.round(locker.Incarcare * 100),
-                            newLoadPercentage: Math.round(newLoadPercentage * 100),
-                            reductionPercentage: Math.round(reductionPercentage),
-                            transferredCompartments: Math.round(transferredLoad)
-                        };
+                        // Presupunem că preluăm 30% din traficul lockerelor foarte apropiate
+                        var transferredItems = currentLoadItems * (impactFactor * 0.3);
+                        var newLoadItems = Math.max(0, currentLoadItems - transferredItems);
+                        var reductionPerc = ((currentLoadItems - newLoadItems) / currentLoadItems) * 100;
                         
-                        impactedLockers.push(impactData);
-                        if (reductionPercentage >= 5) degrevatedLockers.push(impactData);
-                        totalLoadReduction += transferredLoad;
+                        if (reductionPerc > 1) { // Doar reduceri relevante
+                            impactedLockers.push({
+                                locker: locker,
+                                distance: Math.round(distance),
+                                reductionPercentage: Math.round(reductionPerc)
+                            });
+                            totalLoadReduction += transferredItems;
+                        }
                     }
                 }
             });
             
             return {
-                impactedLockers: impactedLockers,
-                degrevatedLockers: degrevatedLockers,
-                totalLoadReduction: Math.round(totalLoadReduction),
+                degrevatedLockers: impactedLockers,
                 newLockerUtilization: Math.min(100, Math.round((totalLoadReduction / newLockerCapacity) * 100))
             };
         }
 
-        function getAIRecommendation(impact, densityData, newLat, newLng) {
-            var recommendation = {
-                score: 0, level: 'good', title: '✅ RECOMANDARE POZITIVĂ', reasons: []
-            };
-
-            if (densityData.finalScore >= 80) { recommendation.score += 50; recommendation.reasons.push('🎯 Densitate FOARTE MARE (' + densityData.finalScore + ')'); }
-            else if (densityData.finalScore >= 60) { recommendation.score += 40; recommendation.reasons.push('📈 Densitate MARE (' + densityData.finalScore + ')'); }
-            else if (densityData.finalScore >= 40) { recommendation.score += 25; recommendation.reasons.push('📊 Densitate MEDIE (' + densityData.finalScore + ')'); }
-            else { recommendation.score -= 10; recommendation.reasons.push('❌ Densitate SCĂZUTĂ'); }
-
-            if (impact.degrevatedLockers.length > 0) {
-                recommendation.score += 25;
-                recommendation.reasons.push('🚀 Degrevare: ' + impact.degrevatedLockers.length + ' lockere afectate');
-            } else {
-                recommendation.score -= 5;
-                recommendation.reasons.push('⚠️ Fără degrevare semnificativă');
-            }
-
-            if (impact.newLockerUtilization >= 40) { recommendation.score += 25; recommendation.reasons.push('💪 Utilizare estimată BUNĂ'); }
+        function getAIRecommendation(impact, densityData) {
+            var score = 0;
+            var reasons = [];
             
-            recommendation.score = Math.max(0, Math.min(100, Math.round(recommendation.score)));
+            // Factor 1: Densitate existentă (unde e aglomerat e nevoie de lockere)
+            if (densityData.finalScore >= 80) { score += 40; reasons.push('🔥 Zonă cu densitate critică'); }
+            else if (densityData.finalScore >= 50) { score += 20; reasons.push('📈 Zonă activă'); }
             
-            if (recommendation.score >= 80) { recommendation.level = 'good'; recommendation.title = '🌟 RECOMANDARE EXCELENTĂ'; }
-            else if (recommendation.score >= 60) { recommendation.level = 'good'; recommendation.title = '✅ RECOMANDARE BUNĂ'; }
-            else if (recommendation.score >= 40) { recommendation.level = 'warning'; recommendation.title = '⚠️ RECOMANDARE CU REZERVE'; }
-            else { recommendation.level = 'bad'; recommendation.title = '❌ RECOMANDARE SLABĂ'; }
+            // Factor 2: Degrevare vecini
+            if (impact.degrevatedLockers.length >= 2) { score += 30; reasons.push('🛡️ Protejează ' + impact.degrevatedLockers.length + ' lockere vecine'); }
+            else if (impact.degrevatedLockers.length === 1) { score += 15; reasons.push('🛡️ Ajută un locker vecin'); }
             
-            return recommendation;
+            // Factor 3: Utilizare estimată
+            if (impact.newLockerUtilization > 50) { score += 30; reasons.push('💰 Potențial mare de utilizare'); }
+            else { score -= 10; reasons.push('⚠️ Risc de utilizare scăzută'); }
+            
+            score = Math.max(0, Math.min(100, score));
+            
+            var level = score >= 70 ? 'good' : (score >= 40 ? 'warning' : 'bad');
+            var title = score >= 70 ? 'RECOMANDAT ✅' : (score >= 40 ? 'ACCEPTABIL ⚠️' : 'NERENTABIL ❌');
+            
+            return { score: score, level: level, title: title, reasons: reasons };
         }
 
+        // --- 6. LOGICĂ INTERFAȚĂ ---
         function addNewLocation(lat, lng) {
-            var densityData = calculateRealDensity(lat, lng);
+            var density = calculateRealDensity(lat, lng);
             var impact = analyzeImpact(lat, lng);
-            var recommendation = getAIRecommendation(impact, densityData, lat, lng);
+            var rec = getAIRecommendation(impact, density);
             
-            var newLocation = { lat: lat, lng: lng, densityData: densityData, impact: impact, recommendation: recommendation };
+            var newLocation = { lat: lat, lng: lng, rec: rec, impact: impact };
             newLocations.push(newLocation);
             
-            var markerColor = recommendation.level === 'good' ? '#00ff88' : recommendation.level === 'warning' ? '#ffa502' : '#ff4757';
-            var newMarker = L.circleMarker([lat, lng], { radius: 14, fillColor: markerColor, color: 'white', weight: 3, opacity: 1, fillOpacity: 0.9 });
-
-            var popupContent = `
-                <div class="popup-content">
-                    <div class="popup-title">🎯 Locație Nouă ${newLocations.length}</div>
-                    <div class="popup-detail"><strong>🤖 Scor AI:</strong> ${recommendation.score}/100</div>
-                    <div class="popup-detail"><strong>🚀 Degrevate:</strong> ${impact.degrevatedLockers.length} locker-e</div>
-                    <div class="popup-status status-${recommendation.level}">${recommendation.title}</div>
-                </div>
-            `;
+            var color = rec.level === 'good' ? '#00ff88' : (rec.level === 'warning' ? '#ffa502' : '#ff4757');
+            var marker = L.circleMarker([lat, lng], { radius: 12, fillColor: color, color: '#fff', weight: 3, fillOpacity: 1 }).addTo(map);
             
-            newMarker.bindPopup(popupContent);
-            newMarker.newLocationIndex = newLocations.length - 1;
-            newMarker.addTo(map);
+            // Desenare raze impact
+            var circle = L.circle([lat, lng], { radius: 400, color: '#00d4ff', weight: 1, fillOpacity: 0.1 }).addTo(map);
+            impactCircles.push(circle);
             
-            var impactCircle = L.circle([lat, lng], { radius: 400, fillColor: 'rgba(0, 212, 255, 0.1)', color: '#00d4ff', weight: 2, opacity: 0.8, fillOpacity: 0.1 });
-            impactCircle.addTo(map);
-            impactCircles.push(impactCircle);
-            
-            impact.degrevatedLockers.forEach(function(degrevated) {
-                var line = L.polyline([[lat, lng], [degrevated.locker.lat, degrevated.locker.lng]], { color: '#00ff88', weight: 3, opacity: 0.7, dashArray: '8, 12' });
-                line.addTo(map);
+            // Desenare conexiuni
+            impact.degrevatedLockers.forEach(function(d) {
+                var line = L.polyline([[lat, lng], [d.locker.lat, d.locker.lng]], { color: '#00ff88', dashArray: '5, 5', weight: 2 }).addTo(map);
                 impactLines.push(line);
             });
             
-            showLocationAnalysis(newLocation, newLocations.length - 1);
+            showAnalysisResult(newLocation, newLocations.length);
         }
 
-        function showLocationAnalysis(location, index) {
-            var resultsDiv = document.getElementById('analysisResults');
-            resultsDiv.style.display = 'block';
+        function showAnalysisResult(loc, index) {
+            var container = document.getElementById('analysisResults');
+            container.style.display = 'block';
             
             var html = `
-                <div class="scenario-item" id="scenario-${index}">
-                    <div class="scenario-header">
-                        <div class="scenario-title">📍 SCENARIU ${index + 1}</div>
-                        <button onclick="deleteScenario(${index})" class="quest-button delete">🗑️ ȘTERGE</button>
+                <div class="scenario-item">
+                    <div style="font-weight:900; color:${loc.rec.level === 'good' ? '#00ff88' : '#ffa502'}">
+                        SCENARIU ${index}: ${loc.rec.title}
                     </div>
-                    <div class="recommendation ${location.recommendation.level}">
-                        <strong>${location.recommendation.title}</strong><br>
-                        🤖 <strong>Scor AI: ${location.recommendation.score}/100</strong><br>
-                        <small>${location.recommendation.reasons.join('<br>')}</small>
+                    <div style="font-size:11px; margin-top:5px;">
+                        🤖 Scor AI: ${loc.rec.score}/100<br>
+                        📦 Vecini ajutați: ${loc.impact.degrevatedLockers.length}<br>
+                        <i>${loc.rec.reasons.join(', ')}</i>
                     </div>
                 </div>
             `;
-            resultsDiv.insertAdjacentHTML('afterbegin', html);
-        }
-
-        function deleteScenario(index) {
-            newLocations.splice(index, 1);
-            impactCircles.forEach(circle => map.removeLayer(circle));
-            impactLines.forEach(line => map.removeLayer(line));
-            impactCircles = []; impactLines = [];
-            
-            map.eachLayer(function(layer) {
-                if (layer.newLocationIndex !== undefined) map.removeLayer(layer);
-            });
-            
-            document.getElementById('analysisResults').innerHTML = '';
-            newLocations.forEach((loc, i) => addNewLocation(loc.lat, loc.lng)); // Quick re-render logic
-        }
-
-        function clearAllScenarios() {
-            newLocations = [];
-            impactCircles.forEach(circle => map.removeLayer(circle));
-            impactLines.forEach(line => map.removeLayer(line));
-            impactCircles = []; impactLines = [];
-            map.eachLayer(function(layer) {
-                if (layer.newLocationIndex !== undefined) map.removeLayer(layer);
-            });
-            document.getElementById('analysisResults').innerHTML = '';
-            document.getElementById('analysisResults').style.display = 'none';
-        }
-
-        function analyzeAllImpacts() {
-            // Placeholder pentru animația de analiză globală
-            alert("🤖 Analiza globală a tuturor scenariilor a început...");
+            container.insertAdjacentHTML('afterbegin', html);
         }
 
         function toggleAddMode() {
@@ -603,8 +554,8 @@
             var btn = document.getElementById('addModeBtn');
             var indicator = document.getElementById('modeIndicator');
             
-            if (addMode) {
-                btn.innerHTML = '🛑 DEZACTIVEAZĂ MOD ADĂUGARE';
+            if(addMode) {
+                btn.innerHTML = '🛑 STOP ADĂUGARE';
                 btn.style.background = 'linear-gradient(145deg, #ff4757 0%, #dc3545 100%)';
                 indicator.style.display = 'block';
                 map.getContainer().style.cursor = 'crosshair';
@@ -616,81 +567,60 @@
             }
         }
 
-        // --- 6. FUNCȚII CĂUTARE ACTUALIZATE (NAȚIONAL) ---
-        function searchAddress() {
-            var query = document.getElementById('searchInput').value.trim();
-            if (query.length < 3) {
-                alert('🔍 Introduceți minim 3 caractere!');
-                return;
-            }
-
-            var resultsDiv = document.getElementById('searchResults');
-            resultsDiv.innerHTML = '<div class="loading">🔍 Căutare în România...</div>';
-            resultsDiv.style.display = 'block';
-
-            // Căutare națională: countrycodes=ro și fără viewbox limitativ
-            var nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=ro&q=${encodeURIComponent(query)}`;
+        function clearAllScenarios() {
+            newLocations = [];
+            impactCircles.forEach(l => map.removeLayer(l));
+            impactLines.forEach(l => map.removeLayer(l));
+            impactCircles = []; impactLines = [];
+            document.getElementById('analysisResults').innerHTML = '';
             
-            fetch(nominatimUrl)
-                .then(response => response.json())
-                .then(data => showResults(data, query))
-                .catch(error => {
-                    resultsDiv.innerHTML = '<div style="padding: 10px; color: #ff4757;">❌ Eroare conexiune</div>';
-                });
-        }
-
-        function showResults(results, query) {
-            var resultsDiv = document.getElementById('searchResults');
-            if (results.length === 0) {
-                resultsDiv.innerHTML = '<div style="padding: 10px; color: #ff4757;">❌ Fără rezultate pentru "' + query + '"</div>';
-                return;
-            }
-            
-            var html = '';
-            results.forEach(function(result) {
-                // Scurtăm numele pentru afișare
-                var displayName = result.display_name.split(',').slice(0, 3).join(', ');
-                html += `
-                    <div class="search-result-item" onclick="selectSearchResult(${result.lat}, ${result.lon}, '${displayName.replace(/'/g, "\\'")}')">
-                        <div style="font-weight: 700;">📍 ${displayName}</div>
-                        <div style="font-size: 10px; color: rgba(255,255,255,0.7);">${result.type || 'adresă'}</div>
-                    </div>
-                `;
+            // Reîmprospătare hartă simplă (scoatem markerii noi adăugați manual)
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.CircleMarker && layer.options.weight === 3) { // Identificăm markerii noi după grosimea conturului
+                    map.removeLayer(layer);
+                }
             });
-            resultsDiv.innerHTML = html;
         }
-
-        function selectSearchResult(lat, lon, displayName) {
-            map.setView([lat, lon], 15, { animate: true, duration: 1 });
+        
+        // --- CĂUTARE ---
+        function searchAddress() {
+            var query = document.getElementById('searchInput').value;
+            if(query.length < 3) return;
             
-            if (window.searchMarker) map.removeLayer(window.searchMarker);
-            
-            window.searchMarker = L.marker([lat, lon], {
-                icon: L.divIcon({
-                    className: 'search-marker',
-                    html: '<div style="background: #00d4ff; border: 3px solid white; border-radius: 50%; width: 24px; height: 24px; margin: -12px; box-shadow: 0 0 15px rgba(0,212,255,0.8); animation: pulse 2s infinite;"></div>',
-                    iconSize: [24, 24]
-                })
-            }).addTo(map);
-            
-            window.searchMarker.bindPopup(`<b>🎯 Rezultat:</b><br>${displayName}`).openPopup();
-            document.getElementById('searchResults').style.display = 'none';
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=ro&q=${encodeURIComponent(query)}`)
+                .then(r => r.json())
+                .then(data => {
+                    var resDiv = document.getElementById('searchResults');
+                    resDiv.style.display = 'block';
+                    resDiv.innerHTML = '';
+                    
+                    if(data.length === 0) { resDiv.innerHTML = '<div style="padding:10px;">❌ Nimic găsit</div>'; return; }
+                    
+                    data.forEach(item => {
+                        var div = document.createElement('div');
+                        div.className = 'search-result-item';
+                        div.innerText = '📍 ' + item.display_name.split(',')[0];
+                        div.onclick = function() {
+                            map.setView([item.lat, item.lon], 15);
+                            resDiv.style.display = 'none';
+                            L.popup().setLatLng([item.lat, item.lon]).setContent('🎯 ' + item.display_name).openOn(map);
+                        };
+                        resDiv.appendChild(div);
+                    });
+                });
         }
 
         function clearSearch() {
             document.getElementById('searchInput').value = '';
             document.getElementById('searchResults').style.display = 'none';
-            if (window.searchMarker) map.removeLayer(window.searchMarker);
         }
 
-        // Events
+        // Map events
         map.on('click', function(e) {
             if (addMode) addNewLocation(e.latlng.lat, e.latlng.lng);
         });
 
-        document.getElementById('searchInput').addEventListener('keypress', function(event) {
-            if (event.key === 'Enter') searchAddress();
-        });
+        console.log('🕵️‍♂️ Quest Detective - Ready');
     </script>
 </body>
 </html>
