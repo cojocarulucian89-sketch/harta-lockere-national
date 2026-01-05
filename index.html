@@ -557,39 +557,102 @@
             markerGroups[status] = L.layerGroup().addTo(map);
         });
 
-        // Adaug markeri existenți
-        lockersData.forEach(function(locker, index) {
-            if (locker.lat && locker.lng && !isNaN(locker.lat) && !isNaN(locker.lng)) {
-                var color = statusColors[locker.Status] || '#666666';
+        // --- 1. LISTA LUNILOR PENTRU CALCUL ---
+        const monthColumns = [
+            'Aprilie 2024', 'Mai 2024', 'Iunie 2024', 'Iulie 2024', 'August', 
+            'Septembrie 2024', 'Octombrie 2025', 'Noiembrie 2024', 'Decembrie 2024',
+            'Ianuarie 2025', 'Februarie 2025', 'Martie 2025', 'Aprilie 2025',
+            'Mai 2025', 'Iunie 2025', 'Iulie 2025', 'August', 'Septembrie 2025',
+            'Octombrie 2025', 'Noiembrie 2025'
+        ];
+
+        // --- 2. CITIREA FIȘIERULUI CSV (date_lockere.csv) ---
+        fetch('date_lockere.csv')
+            .then(response => response.text())
+            .then(csvText => {
+                const csvData = parseCSV(csvText);
                 
-                var marker = L.circleMarker([locker.lat, locker.lng], {
-                    radius: 9,
-                    fillColor: color,
-                    color: 'white',
-                    weight: 3,
-                    opacity: 1,
-                    fillOpacity: 0.9
+                // Creăm un index pentru căutare rapidă
+                const csvMap = {};
+                csvData.forEach(row => {
+                    if(row['Locker Nume']) {
+                        csvMap[row['Locker Nume'].trim()] = row;
+                    }
                 });
 
-                var popupContent = `
-                    <div class="popup-content">
-                        <div class="popup-title">${locker.Denumire}</div>
-                        <div class="popup-detail"><strong>📍 Locație:</strong> ${locker.Oras}, ${locker.Judet}</div>
-                        <div class="popup-detail"><strong>📬 Adresă:</strong> ${locker.Adresa || 'N/A'}</div>
-                        <div class="popup-detail"><strong>📊 Încărcare:</strong> ${Math.round(locker.Incarcare * 100)}%</div>
-                        <div class="popup-detail"><strong>📦 Capacitate:</strong> ${locker.Capacitate} compartimente</div>
-                        <div class="popup-detail"><strong>⏱️ Zile inactivare:</strong> ${locker.Zile_Inactivare} zile</div>
-                        <div class="popup-detail"><strong>🔧 Model:</strong> ${locker.Model || 'N/A'}</div>
-                        <div class="popup-status status-${locker.Status.toLowerCase().replace(' ', '-')}">${locker.Status}</div>
-                    </div>
-                `;
-                
-                marker.bindPopup(popupContent);
-                marker.bindTooltip(locker.Denumire, { direction: 'top' });
-                marker.lockerId = index;
-                
-                markerGroups[locker.Status].addLayer(marker);
-            }
+                // --- 3. GENERAREA MARKERELOR ---
+                lockersData.forEach(function(locker) {
+                    if (locker.lat && locker.lng && !isNaN(locker.lat) && !isNaN(locker.lng)) {
+                        
+                        // Căutăm datele în CSV
+                        const extraData = csvMap[locker.Denumire.trim()] || {};
+
+                        // Calculăm media (Opțiunea B: doar luni active)
+                        let totalLoad = 0;
+                        let activeMonths = 0;
+                        
+                        monthColumns.forEach(col => {
+                            let val = parseFloat((extraData[col] || '0').toString().replace(',', '.'));
+                            if (!isNaN(val) && val > 0) {
+                                totalLoad += val;
+                                activeMonths++;
+                            }
+                        });
+
+                        let averageDisplay = activeMonths > 0 ? (Math.round((totalLoad / activeMonths) * 100) + '%') : '0%';
+                        let novLoadRaw = parseFloat((extraData['Noiembrie 2025'] || '0').toString().replace(',', '.'));
+                        let novDisplay = Math.round(novLoadRaw * 100) + '%';
+
+                        // Configurare culoare și marker
+                        var color = statusColors[locker.Status] || '#666666';
+                        var marker = L.circleMarker([locker.lat, locker.lng], {
+                            radius: 9,
+                            fillColor: color,
+                            color: 'white',
+                            weight: 3,
+                            opacity: 1,
+                            fillOpacity: 0.9
+                        });
+
+                        // Configurare Popup
+                        var popupContent = `
+                            <div class="popup-content">
+                                <div class="popup-title">${locker.Denumire}</div>
+                                <div class="popup-detail"><strong>📍 Locație:</strong> ${locker.Oras}, ${locker.Judet}</div>
+                                <div class="popup-detail"><strong>📬 Adresă:</strong> ${locker.Adresa || 'N/A'}</div>
+                                
+                                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px;">
+                                    <div class="popup-detail"><strong>📈 Încărcare Medie (2024-25):</strong> <span style="color: #4ade80; font-weight: bold;">${averageDisplay}</span></div>
+                                    <div class="popup-detail"><strong>📅 Noiembrie 2025:</strong> <span style="color: #60a5fa; font-weight: bold;">${novDisplay}</span></div>
+                                </div>
+                                
+                                <div class="popup-detail"><strong>📦 Capacitate:</strong> ${locker.Capacitate}</div>
+                                <div class="popup-status status-${locker.Status.toLowerCase().replace(' ', '-')}">${locker.Status}</div>
+                            </div>
+                        `;
+
+                        marker.bindPopup(popupContent);
+                        marker.addTo(map);
+                    }
+                });
+            })
+            .catch(error => console.error('Eroare la încărcarea CSV:', error));
+
+        // --- 4. FUNCȚIA AJUTĂTOARE DE PARSARE ---
+        function parseCSV(text) {
+            const lines = text.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim().replace(/['"]+/g, ''));
+            return lines.slice(1).map(line => {
+                const data = {};
+                const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+                headers.forEach((header, i) => {
+                    let val = values[i] || '';
+                    val = val.replace(/^"|"$/g, '').trim();
+                    data[header] = val;
+                });
+                return data;
+            });
+        }
         });
 
         // Control layers
